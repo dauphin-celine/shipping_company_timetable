@@ -1,16 +1,279 @@
-# React + Vite
+Программа состоит из двух частей:
+frontend на React - интерфейс, кнопки, формы, таблицы;
+backend/data layer на Supabase - база данных, где хранятся маршруты, водители, рейсы и назначения.
+React не хранит данные постоянно. Он показывает страницы; отправляет запросы в Supabase; получает данные из таблиц; отображает их пользователю.
+2.	Структура frontend
+ 
+Рисунок 1. Структура frontend-части проекта
+App.jsx осуществляет навигацию между страницами. Его задача: показать заголовок приложения; переключать страницы; решать, какая страница видна при определенном запросе. Соответственно, вывод каждой страницы вывод содержание соответствующей “Page” – DriversPage, TripsPage и так далее. Таким образом, App.jsx является центральным элементом для формирования интерфейса программы.
+Для всех элементов программы действует общая логика очередности (на примере маршрутов):
+ 
+Загрузка маршрута – отображение таблицы – создание маршрута – обновление таблицы
+Папка pages содержит страницы приложения. Каждая страница отвечает за отдельную сущность системы. То есть страницы связывают интерфейс и данные. RoutesPage.jsx работает с маршрутами: загружает маршруты из базы; показывает таблицу маршрутов; подключает форму добавления маршрута; после добавления обновляет список. DriversPage.jsx работает с водителями: загружает водителей; выводит таблицу; подключает форму добавления; после добавления обновляет данные. TripsPage.jsx работает с рейсами: загружает рейсы; загружает маршруты для выбора в форме; позволяет создать новый рейс; показывает список созданных рейсов. TripDriversPage.jsx работает с назначением водителей на рейсы: загружает рейсы; загружает водителей; загружает правила коэффициентов стажа; загружает уже существующие назначения; передает все эти данные в форму; принимает готовую запись и сохраняет ее в trips_drivers.
+Папка components: содержит используемые при использовании программы пользователем части интерфейса, в случае этой программы - формы. Например, RouteForm.jsx – это форма добавления маршрута. Она хранит введенные значения через функцию useState; собирает объект нового маршрута; вызывает onAdd(newRoute), который передала страница. Форма сама не записывает данные в базу напрямую. Она только собирает данные и передает их «сервисам».
+Папка services содержит функции для работы с базой данных. Таким образом, все взаимодействие непосредственно с базой данных осуществляется не через формы, а через отдельный «слой» программы. Например, ключевыми элементами сервиса routesService.js являются функции getRoutes() (получить маршруты) и createRoute() (добавить маршрут).
+supabaseClient.js – это скрипт, отвечающий за подключение к базе.
+3.	Структура базы данных (backend)
+Первоначальная структура базы данных была переработана. Вместо трех таблиц теперь пять; введены новые таблицы для хранения диапазонов коэффициента стажа и объединения данных о водителях с данными о конкретных рейсах.
+routes хранит данные по маршрутам. Каждый маршрут можно обозначить каким-то названием, указать его продолжительность по дня и пройденную дистанцию, а также базовую ставку оплаты за него.
+drivers хранит данные о водителях. Помимо полного имени учитывается еще и стаж водителя.
+trips — рейсы. Хранит данные о рейсах. Рейс отличается от маршрута тем, что рейс – это уникальная поездка, имеющая дату начала и окончания; маршрут же не является уникальным и может быть пройден более одного раза.
+trips_drivers — связь рейса и водителей. Эта таблица связана с таблицей trips по ключу в виде id, а также с таблицей drivers по ключу в виде id. Соответственно, в одном рейсе может быть два водителя, а один водитель может быть задействован в нескольких перевозках. 
+Это ключевая для задания таблица; в ней хранятся данные о подлежащей выплате водителю сумме с учетом его маршрута, с учетом конкретной поездки, а также доли оплаты (если в рейс вышли несколько водителей).
+experience_rates — таблица правил оплаты в соответствии с диапазонами стажа. Она используется в experienceRatesService.js 
+4.	Логика расчета оплаты
+По условиям задания необходимо разработать «гибкую систему оплаты», в том числе для случаев, где перевозка осуществляется двумя водителями в одном рейсе. Относительно начального задания был введен для разнообразия коэффициент бонуса, который задается произвольно и суммируется с остальной частью оплаты. Кроме того, поскольку теперь в рейс могут выходить двое водителей, можно рассчитать, какая доля от общей суммы оплаты будет выплачена каждому водителю.
+Таким образом, для одного водителя:
+Оплата = Базовая ставка * Коэффициент стажа * Доля оплаты за рейс + Бонус
+Доля оплаты за рейс может быть задана произвольно.
+Расчет осуществляется в модуле TripDriverForm.jsx:
+  const previewPayment =
+    basePayment * Number(experienceCoeff ?? 0) * Number(paymentShare || 0) +
+    Number(bonus || 0)
+5.	Логика «потока данных» в React-приложении при загрузке данных из базы и добавлении записей в базу
+Логику взаимодействия интерфейса и бэкенда можно представить на примере процессов загрузки данных из базы данных и добавления данных в базу данных через форму.
+Загрузка данных происходит на «страницах» по следующему алгоритму: после открытия страницы срабатывает функция useEffect() и страница вызывает функцию сервиса. Сервис обращается в Supabase.  Страница кладет данных из Supabase в useState. React перерисовывает интерфейс. 
+Например, для RoutesPage:
+1.	RoutesPage вызывает getRoutes(); 
+2.	routesService делает select * from routes; 
+3.	setRoutes(data); 
+4.	таблица маршрутов отображается на экране.
+Добавление записи происходит в «формах» по следующей логике: пользователь заполняет форму; компонент формы собирает объект и вызывает функцию onAdd(...). Страница принимает объект и вызывает сервис create...(...); сервис отправляет insert в Supabase. После успешного добавления страница заново загружает список и показывает обновленные данные. 
+Например, для DriverForm:
+1.	в DriverForm нужно ввести фамилию, имя, отчество, стаж водителя; 
+2.	DriverForm вызывает onAdd(newDriver); 
+3.	DriversPage вызывает createDriver(newDriver); 
+4.	запись сохраняется в базе; 
+5.	затем вызывается loadDrivers(); 
+6.	таблица обновляется.
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+6.	Как работает назначение водителя на рейс (TripDriverForm)
+Самый важный для решения задачи процесс – это работа с формой TripDriverForm. Именно в ней происходит расчет платы водителя.
+Пользователь выбирает рейс. Из выбранного рейса программа получает:
+•	маршрут; 
+•	базовую оплату маршрута. 
+Пользователь выбирает водителя. Автоматически будет получен и его стаж. Далее форма вызывает функцию findCoeffByExperience(experienceYears, rates).
+Она перебирает experience_rates; ищет диапазон, в который попадает стаж, и возвращает coeff. 
+Например, если стаж = «7 лет», он попадет в диапазон = «6–10», что даст коэффициент = 1.4. Коэффициенты не привязаны к каким-то конкретным параметрам – сугубо творчество в рамках задания. 
+Пользователь вводит ставку бонуса и соотношение оплаты – поскольку в рейсе может быть два водителя. Соответственно, каждый из них получит долю, пропорциональную этому соотношению
+Перед сохранением форма делает проверки: все обязательные поля заполнены; у рейса не больше двух водителей. Для этого вызывается функция getDriversCountForTrip(tripId) 
+Еще одна проверка: что тот же водитель не назначен на этот рейс повторно.
+Если всё корректно, создается объект:
+•	trip_id 
+•	driver_id 
+•	role 
+•	bonus 
+•	experience_coeff 
+•	payment_share 
+•	calculated_payment 
+И он отправляется в trips_drivers.
+Листинг кода данного процесса представлен ниже
+import { useMemo, useState } from "react"
+import { getDriversCountForTrip, getTripDrivers } from "../services/tripDriversService"
+import { findCoeffByExperience } from "../services/experienceRatesService"
 
-Currently, two official plugins are available:
+export default function TripDriverForm({ trips, drivers, experienceRates, onAdd }) {
+  const [tripId, setTripId] = useState("")
+  const [driverId, setDriverId] = useState("")
+  const [role, setRole] = useState("")
+  const [bonus, setBonus] = useState("")
+  const [paymentShare, setPaymentShare] = useState("")
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+  const selectedTrip = useMemo(() => {
+    return trips.find((trip) => trip.id === Number(tripId))
+  }, [tripId, trips])
 
-## React Compiler
+  const selectedDriver = useMemo(() => {
+    return drivers.find((driver) => driver.id === Number(driverId))
+  }, [driverId, drivers])
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+  const basePayment = Number(selectedTrip?.routes?.base_payment ?? 0)
 
-## Expanding the ESLint configuration
+  const experienceCoeff = selectedDriver
+    ? findCoeffByExperience(selectedDriver.experience_years, experienceRates)
+    : null
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+  const previewPayment =
+    basePayment * Number(experienceCoeff ?? 0) * Number(paymentShare || 0) +
+    Number(bonus || 0)
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+
+    if (!tripId || !driverId || !role || !paymentShare) {
+      alert("Заполни все обязательные поля")
+      return
+    }
+
+    if (Number(paymentShare) <= 0) {
+      alert("Доля оплаты должна быть больше 0")
+      return
+    }
+
+    if (experienceCoeff === null) {
+      alert("Для этого стажа не найден коэффициент в таблице experience_rates")
+      return
+    }
+
+    const driversCount = await getDriversCountForTrip(Number(tripId))
+    if (driversCount >= 2) {
+      alert("У этого рейса уже назначено 2 водителя")
+      return
+    }
+
+    const existingAssignments = await getTripDrivers()
+    const alreadyExists = existingAssignments.some(
+      (item) =>
+        Number(item.trip_id) === Number(tripId) &&
+        Number(item.driver_id) === Number(driverId)
+    )
+
+    if (alreadyExists) {
+      alert("Этот водитель уже назначен на выбранный рейс")
+      return
+    }
+
+    const newTripDriver = {
+      trip_id: Number(tripId),
+      driver_id: Number(driverId),
+      role: role.trim(),
+      bonus: Number(bonus || 0),
+      experience_coeff: Number(experienceCoeff),
+      payment_share: Number(paymentShare),
+      calculated_payment: previewPayment,
+    }
+
+    await onAdd(newTripDriver)
+
+    setTripId("")
+    setDriverId("")
+    setRole("")
+    setBonus("")
+    setPaymentShare("")
+  }
+
+  return (
+    <form onSubmit={handleSubmit} style={{ marginBottom: "20px" }}>
+      <h3>Назначить водителя на рейс</h3>
+
+      <div style={{ marginBottom: "10px" }}>
+        <select value={tripId} onChange={(e) => setTripId(e.target.value)}>
+          <option value="">Выбери рейс</option>
+          {trips.map((trip) => (
+            <option key={trip.id} value={trip.id}>
+              Рейс #{trip.id} — {trip.routes?.name || "Без маршрута"} ({trip.departure_date})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div style={{ marginBottom: "10px" }}>
+        <select value={driverId} onChange={(e) => setDriverId(e.target.value)}>
+          <option value="">Выбери водителя</option>
+          {drivers.map((driver) => (
+            <option key={driver.id} value={driver.id}>
+              {driver.last_name} {driver.first_name} {driver.middle_name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {selectedDriver && (
+        <div style={{ marginBottom: "10px" }}>
+          <strong>Стаж:</strong> {selectedDriver.experience_years} лет
+        </div>
+      )}
+
+      {selectedDriver && (
+        <div style={{ marginBottom: "10px" }}>
+          <strong>Коэффициент стажа:</strong>{" "}
+          {experienceCoeff !== null ? experienceCoeff : "не найден"}
+        </div>
+      )}
+
+      <div style={{ marginBottom: "10px" }}>
+        <input
+          type="text"
+          placeholder="Роль"
+          value={role}
+          onChange={(e) => setRole(e.target.value)}
+        />
+      </div>
+
+      <div style={{ marginBottom: "10px" }}>
+        <input
+          type="number"
+          step="0.01"
+          placeholder="Премия"
+          value={bonus}
+          onChange={(e) => setBonus(e.target.value)}
+        />
+      </div>
+
+      <div style={{ marginBottom: "10px" }}>
+        <input
+          type="number"
+          step="0.01"
+          placeholder="Доля оплаты (например 0.5)"
+          value={paymentShare}
+          onChange={(e) => setPaymentShare(e.target.value)}
+        />
+      </div>
+
+      <div style={{ marginBottom: "10px" }}>
+        <strong>Базовая оплата маршрута:</strong> {basePayment}
+      </div>
+
+      <div style={{ marginBottom: "10px" }}>
+        <strong>Предварительная итоговая оплата:</strong> {previewPayment}
+      </div>
+
+      <button type="submit">Назначить водителя</button>
+    </form>
+  )
+}
+
+7.	Тестирование программы
+Программа развернута локально: для упрощения не использована контейнеризация и не произведено разворачивание на онлайн-сервере. По умолчанию первая страницы – «Маршруты».
+ 
+Рисунок 2. Страница «Маршруты»
+До тестирования есть два маршрута, что отражается в базе данных.
+ 
+Рисунок 3. База данных – таблица «trips»
+Добавим новый маршрут – «Москва-Казань». База данных успешно обновилась и React отразил изменения в веб-интерфейсе.
+ 
+Рисунок 4. Страница «Маршруты» после обновления
+ 
+Рисунок 5. База данных – таблица «trips» - после обновления
+Вторая страница – «Водители»
+ 
+Рисунок 6. Страница «Водители»
+ 
+Рисунок 7. База данных – таблица «drivers»
+Добавим нового водителя. Водитель успешно добавлен.
+ 
+Рисунок 8. Страница «Водители» после обновления
+ 
+Рисунок 9. База данных – таблица «drivers» - после обновления
+Следующая страница – «Рейсы». Можно обратить внимание, что добавленный ранее рейс «Моска-Казань» уже доступен в выпадающем меню для выбора – поскольку две таблицы связаны ключами. 
+ 
+Рисунок 10. Страница «Рейсы»
+ 
+Рисунок 11. База данных – таблица «trips»
+Добавим новый рейс по недавно добавленному маршруту. Заодно можно проверить обработку ошибок – например, можно попытаться выставить дату возврата из рейса, которая раньше даты отбытия в него.
+ 
+Рисунок 12. Обработка ошибки формы «Рейсы»
+ 
+Рисунок 13. Страница «Рейсы» после обновления
+ 
+Рисунок 14. База данных – таблица «trips» - после обновления
+Финальная страница – «Расчет выплат».
+ 
+Рисунок 15. Страница «Расчет выплат»
+Допустим, рейс «Москва-Казань» с базовой ставкой 20 000 рублей будет обслуживаться в одиночку водителем со стажем 15 лет, что дает повышающий коэффициент 2. Он едет вдвоем с другим водителем, каждый из них получит бонус в 5 000 рублей; при этом водитель со стажем 15 лет будет ехать большую часть маршрута, что условно даст ему 80% оплаты. Второй водитель, соответственно, получит 20% оплаты. Добавить третьего в тот же рейс не получится.
+ 
+Рисунок 16. Страница «Расчет выплат» с учетом обновления рейса
+ 
+Рисунок 17. База данных – таблица «trips_drivers» - после обновления
+Заключение
+Техническое задание соблюдено – программа устанавливает связь с онлайн-базой, корректно вносит и обрабатывает данные, обрабатывает ошибки и учитывает специфические требования задачи. Дальнейшая оптимизация должна быть нацелена на создание дополнительных элементов визуализации (например, динамически обновляемых отчетов), а также на увеличение степени связности страниц и сервисов (например, необходимо добавить дополнительную проверку того, что оплата двух водителей на одном рейсе не превышает максимальный размер оплаты для этого рейса).
